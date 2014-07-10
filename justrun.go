@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
-	"github.com/howeyc/fsnotify"
 	"log"
 	"os"
 	"os/signal"
@@ -91,22 +90,20 @@ func main() {
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go waitForInterrupt(sigCh, cmd)
 
+	filteredPaths := make([]string, 0, len(inputPaths))
+	for _, path := range inputPaths {
+		if !ig.IsIgnored(path) {
+			filteredPaths = append(filteredPaths, path)
+		}
+	}
+
 	cmdCh := make(chan time.Time, 100)
-	w, err := fsnotify.NewWatcher()
+	w, err := NewWatcher(filteredPaths)
 	if err != nil {
 		log.Fatal(err)
 	}
 	go listenForEvents(w, cmdCh, ig)
 
-	for _, path := range inputPaths {
-		if ig.IsIgnored(path) {
-			continue
-		}
-		err = w.Watch(path)
-		if err != nil {
-			log.Fatalf("unable to watch '%s': %s", path, err)
-		}
-	}
 	lastStartTime := time.Unix(0, 0)
 	done := make(chan error)
 	wasDelayed := false
@@ -218,10 +215,10 @@ func (ig *ignorer) IsIgnored(path string) bool {
 	return false
 }
 
-func listenForEvents(w *fsnotify.Watcher, cmdCh chan time.Time, ignorer *ignorer) {
+func listenForEvents(w Watcher, cmdCh chan time.Time, ignorer *ignorer) {
 	for {
 		select {
-		case ev := <-w.Event:
+		case ev := <-w.Event():
 			if ignorer.IsIgnored(ev.Name) {
 				continue
 			}
@@ -229,8 +226,6 @@ func listenForEvents(w *fsnotify.Watcher, cmdCh chan time.Time, ignorer *ignorer
 				log.Printf("file changed: %s", ev)
 			}
 			cmdCh <- time.Now()
-		case err := <-w.Error:
-			log.Println("error:", err)
 		}
 	}
 }
